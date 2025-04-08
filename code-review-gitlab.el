@@ -101,7 +101,6 @@ an object then we need to build the diff string ourselves here."
                          (format "deleted file mode %s\n" .a_mode))
                         (.new_file
                          (format "new file mode %s\nindex 0000000000000000000000000000000000000000..1111\n" .b_mode))
-                        (.renamed_file)
                         (t
                          (format "index 1111..2222 %s\n" .a_mode))))
               (header3 (cond
@@ -109,7 +108,6 @@ an object then we need to build the diff string ourselves here."
                          (format "--- %s\n+++ /dev/null\n" .old_path))
                         (.new_file
                          (format "--- /dev/null\n+++ %s\n" .new_path))
-                        (.renamed_file)
                         (t
                          (format "--- %s\n+++ %s\n"
                                  .old_path
