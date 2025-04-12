@@ -156,6 +156,8 @@ an object then we need to build the diff string ourselves here."
                               (split-string "DiffDiscussion/")
                               (-second-item)))
            (diff-pos (code-review-parse-hunk-relative-pos mapping line-obj)))
+      (if (null diff-pos)
+          (setq diff-pos 0))
       `((author (login . ,.author.login))
         (state . ,"")
         (bodyHTML .,"")
