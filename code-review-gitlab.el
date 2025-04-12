@@ -486,14 +486,18 @@ Optionally sets FALLBACK? to get minimal query."
       ("REQUEST_CHANGES"
        (error "Not supported in Gitlab"))
       ("COMMENT"
-       (glab-post (format "/v4/projects/%s/merge_requests/%s/discussions"
-                          (code-review-gitlab--project-id pr)
-                          (oref pr number))
-                  nil
-                  :auth code-review-auth-login-marker
-                  :host code-review-gitlab-host
-                  :payload `((body . ,(oref review feedback))))
-       (message "Review Comment successfully sent!")))
+       (if (not (null (oref review feedback)))
+           (progn
+             (glab-post (format "/v4/projects/%s/merge_requests/%s/discussions"
+                                (code-review-gitlab--project-id pr)
+                                (oref pr number))
+                        nil
+                        :auth code-review-auth-login-marker
+                        :host code-review-gitlab-host
+                        :payload `((body . ,(oref review feedback))))
+             (message "Review Comment successfully sent!"))
+         (message "No Review Comment to sent!")
+         )))
 
     ;; 3. call callback
     ;; seems like we need to wait a bit for gitlab's API to update the new reply record
