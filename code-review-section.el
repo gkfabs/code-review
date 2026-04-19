@@ -900,6 +900,9 @@ INDENT count of spaces are added at the start of every line."
 (defclass code-review-files-report-section (magit-section)
   (()))
 
+(defclass code-review-files-changed-section (magit-section)
+  (()))
+
  ;; -
 
 (defclass code-review-base-comment-section (magit-section)
@@ -1621,7 +1624,7 @@ If you want to display a minibuffer MSG in the end."
                 (magit-run-section-hook 'code-review-sections-hook))
               (magit-insert-section (code-review-files-report-section)
                 (code-review-section-insert-files-changed)
-                (magit-insert-section (code-review-files-chnged)
+                (magit-insert-section (code-review-files-changed-section)
                   (magit-wash-sequence
                    (apply-partially #'magit-diff-wash-diff ())))))
             (if window
@@ -1664,6 +1667,18 @@ If you want to display a minibuffer MSG in the end."
                  (prin1-to-string res))
                 " <->"))
   (error "Unknown backend obj created.  Look at `code-review-log-file' and report the bug upstream"))
+
+(defun code-review--condition-error-p (err)
+  "Return non-nil when ERR is an Emacs condition value."
+  (and (consp err)
+       (symbolp (car err))
+       (get (car err) 'error-conditions)))
+
+(defun code-review--condition-error-message (err)
+  "Return the user-facing message for condition ERR."
+  (if (code-review--condition-error-p err)
+      (error-message-string err)
+    (prin1-to-string err)))
 
 (cl-defmethod code-review--internal-build ((_github code-review-github-repo) progress res &optional buff-name msg)
   "Helper function to build process for GITHUB based on the fetched RES informing PROGRESS."
@@ -1809,23 +1824,34 @@ If you want to provide a MSG for the end of the process."
                  (prin1-to-string (-third-item x))))
 
               (progress-reporter-update progress 2)
-              (if (code-review--auth-token-set? obj x)
-                  (progn
-                    (progress-reporter-done progress)
-                    (message "Required %s token. Look at the README for how to setup your Personal Access Token"
-                             (cond
-                              ((code-review-github-repo-p obj)
-                               "Github")
-                              ((code-review-gitlab-repo-p obj)
-                               "Gitlab")
-                              (t "Unknown"))))
-                (code-review--internal-build obj progress x buff-name msg))))
+              (cond
+               ((-first #'code-review--condition-error-p x)
+                (let ((msg (code-review--condition-error-message
+                            (-first #'code-review--condition-error-p x))))
+                  (progress-reporter-done progress)
+                  (code-review-utils--log
+                   "code-review--build-buffer: [REQUEST_ERROR]"
+                   msg)
+                  (message "%s" msg)))
+               ((code-review--auth-token-set? obj x)
+                (progress-reporter-done progress)
+                (message "Required %s token. Look at the README for how to setup your Personal Access Token"
+                         (cond
+                          ((code-review-github-repo-p obj)
+                           "Github")
+                          ((code-review-gitlab-repo-p obj)
+                           "Gitlab")
+                          (t "Unknown"))))
+               (t
+                (code-review--internal-build obj progress x buff-name msg)))))
           (deferred:error it
             (lambda (err)
               (code-review-utils--log
                "code-review--build-buffer"
                (prin1-to-string err))
-              (if (and (sequencep err) (string-prefix-p "BUG: Unknown extended header:" (-second-item err)))
+              (if (and (consp err)
+                       (stringp (-second-item err))
+                       (string-prefix-p "BUG: Unknown extended header:" (-second-item err)))
                   (message "Your PR might have diffs too large. Currently not supported.")
                 (message "Got an error from your VC provider. Check `code-review-log-file'.")))))))))
 

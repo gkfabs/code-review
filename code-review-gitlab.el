@@ -29,6 +29,7 @@
 ;;; Code:
 
 (require 'dash)
+(require 'ghub)
 (require 'let-alist)
 (require 'code-review-db)
 (require 'code-review-parse-hunk)
@@ -53,11 +54,67 @@
 (defclass code-review-gitlab-repo (code-review-db-pullreq)
   ((callback :initform nil)))
 
- (defvar code-review-gitlab-line-diff-mapping nil
+(defvar code-review-gitlab-line-diff-mapping nil
   "Hold structure to convert Line number position into diff positions.
 For internal usage only.")
 
 ;;; helpers
+
+(defun code-review-gitlab--default-host-p (host)
+  "Return non-nil when HOST is code-review's old GitLab default."
+  (equal host "gitlab.com/api"))
+
+(defun code-review-gitlab--remove-arg (args key)
+  "Return ARGS without plist KEY and its value."
+  (let (res)
+    (while args
+      (let ((k (pop args))
+            (v (pop args)))
+        (unless (eq k key)
+          (setq res (append res (list k v))))))
+    res))
+
+(defun code-review-gitlab--normalize-request (resource args)
+  "Normalize old GitLab RESOURCE and ARGS for current `ghub'."
+  (let ((host (plist-get args :host)))
+    (if (code-review-gitlab--default-host-p host)
+        (let ((resource (cond
+                         ((equal resource "/graphql")
+                          "/api/graphql")
+                         ((string-prefix-p "/v4/" resource)
+                          (substring resource 3))
+                         (t resource)))
+              (args (code-review-gitlab--remove-arg args :host)))
+          (cons resource args))
+      (cons resource args))))
+
+(defun code-review-gitlab--request (method resource &optional params &rest args)
+  "Send a GitLab request through `ghub-request'."
+  (let* ((normalized (code-review-gitlab--normalize-request resource args))
+         (resource (car normalized))
+         (args (cdr normalized)))
+    (apply #'ghub-request method resource params :forge 'gitlab args)))
+
+(defun code-review-gitlab--get (resource &optional params &rest args)
+  "Send a GitLab GET request through `ghub-get'."
+  (let* ((normalized (code-review-gitlab--normalize-request resource args))
+         (resource (car normalized))
+         (args (cdr normalized)))
+    (apply #'ghub-get resource params :forge 'gitlab args)))
+
+(defun code-review-gitlab--post (resource &optional params &rest args)
+  "Send a GitLab POST request through `ghub-post'."
+  (let* ((normalized (code-review-gitlab--normalize-request resource args))
+         (resource (car normalized))
+         (args (cdr normalized)))
+    (apply #'ghub-post resource params :forge 'gitlab args)))
+
+(defun code-review-gitlab--put (resource &optional params &rest args)
+  "Send a GitLab PUT request through `ghub-put'."
+  (let* ((normalized (code-review-gitlab--normalize-request resource args))
+         (resource (car normalized))
+         (args (cdr normalized)))
+    (apply #'ghub-put resource params :forge 'gitlab args)))
 
 (defun code-review-gitlab--project-id (pr)
   "Return the project ID for a PR."
@@ -75,7 +132,7 @@ For internal usage only.")
 (defun code-review-gitlab--graphql (graphql variables callback)
   "Make GRAPHQL call to GITLAB.
 Optionally using VARIABLES.  Provide HOST and CALLBACK fn."
-  (glab-request "POST" "/graphql" nil :payload (json-encode
+  (code-review-gitlab--request "POST" "/graphql" nil :payload (json-encode
                                                 `(("query" . ,graphql)
                                                   ,@(and variables `(("variables" ,@variables)))))
                 :auth code-review-auth-login-marker
@@ -278,7 +335,7 @@ The payload is used to send a MR review to Gitlab."
 
 (cl-defmethod code-review-pullreq-diff ((gitlab code-review-gitlab-repo) callback)
   "Get PR diff from GITLAB, run CALLBACK after answer."
-  (glab-get (format "/v4/projects/%s/merge_requests/%s/changes?access_raw_diffs=true"
+  (code-review-gitlab--get (format "/v4/projects/%s/merge_requests/%s/changes?access_raw_diffs=true"
                     (code-review-gitlab--project-id gitlab)
                     (oref gitlab number))
             nil
@@ -420,7 +477,7 @@ Optionally sets FALLBACK? to get minimal query."
         (-map
          (lambda (reply)
            (lambda ()
-             (glab-post (format "/v4/projects/%s/merge_requests/%s/discussions/%s/notes"
+             (code-review-gitlab--post (format "/v4/projects/%s/merge_requests/%s/discussions/%s/notes"
                                 (code-review-gitlab--project-id pr)
                                 (oref pr number)
                                 (oref reply reply-to-id))
@@ -463,7 +520,7 @@ Optionally sets FALLBACK? to get minimal query."
                                                   'start_sha (a-get-in infos (list 'diffRefs 'startSha))
                                                   'new_path (oref c path)
                                                   'old_path (oref c path)))))
-        (glab-post (format "/v4/projects/%s/merge_requests/%s/discussions"
+        (code-review-gitlab--post (format "/v4/projects/%s/merge_requests/%s/discussions"
                            (code-review-gitlab--project-id pr)
                            (oref pr number))
                    nil
@@ -475,7 +532,7 @@ Optionally sets FALLBACK? to get minimal query."
     ;; 2. send the review verdict
     (pcase (oref review state)
       ("APPROVE"
-       (glab-post (format "/v4/projects/%s/merge_requests/%s/approve"
+       (code-review-gitlab--post (format "/v4/projects/%s/merge_requests/%s/approve"
                           (code-review-gitlab--project-id pr)
                           (oref pr number))
                   nil
@@ -488,7 +545,7 @@ Optionally sets FALLBACK? to get minimal query."
       ("COMMENT"
        (if (not (null (oref review feedback)))
            (progn
-             (glab-post (format "/v4/projects/%s/merge_requests/%s/discussions"
+             (code-review-gitlab--post (format "/v4/projects/%s/merge_requests/%s/discussions"
                                 (code-review-gitlab--project-id pr)
                                 (oref pr number))
                         nil
@@ -517,7 +574,7 @@ Optionally sets FALLBACK? to get minimal query."
 
 (cl-defmethod code-review-get-labels ((gitlab code-review-gitlab-repo))
   "Get labels for your pr at GITLAB."
-  (let ((res (glab-get (format "/v4/projects/%s/labels"
+  (let ((res (code-review-gitlab--get (format "/v4/projects/%s/labels"
                                (code-review-gitlab--project-id gitlab))
                        nil
                        :unpaginate t
@@ -535,7 +592,7 @@ Optionally sets FALLBACK? to get minimal query."
   "Set labels for your pr at GITLAB and call CALLBACK."
   (let* ((labels (-map (lambda (it) (a-get it 'name)) (oref gitlab labels)))
          (labels-str (string-join labels ",")))
-    (glab-put (format "/v4/projects/%s/merge_requests/%s"
+    (code-review-gitlab--put (format "/v4/projects/%s/merge_requests/%s"
                       (code-review-gitlab--project-id gitlab)
                       (oref gitlab number))
               nil
@@ -562,7 +619,7 @@ Optionally sets FALLBACK? to get minimal query."
 
 (cl-defmethod code-review-send-title ((gitlab code-review-gitlab-repo) callback)
   "Set title for your pr in GITLAB and call CALLBACK."
-  (glab-put (format "/v4/projects/%s/merge_requests/%s"
+  (code-review-gitlab--put (format "/v4/projects/%s/merge_requests/%s"
                     (code-review-gitlab--project-id gitlab)
                     (oref gitlab number))
             nil
@@ -608,7 +665,7 @@ Return the blob URL if BLOB? is provided."
 
 (cl-defmethod code-review-new-issue-comment ((gitlab code-review-gitlab-repo) comment-msg callback)
   "Create a new comment issue for GITLAB sending the COMMENT-MSG and call CALLBACK."
-  (glab-post (format "/v4/projects/%s/merge_requests/%s/notes"
+  (code-review-gitlab--post (format "/v4/projects/%s/merge_requests/%s/notes"
                      (code-review-gitlab--project-id gitlab)
                      (oref gitlab number))
              nil
@@ -628,7 +685,7 @@ Return the blob URL if BLOB? is provided."
                                               'start_sha (a-get-in infos (list 'diffRefs 'startSha))
                                               'new_path (oref local-comment path)
                                               'old_path (oref local-comment path)))))
-    (glab-post (format "/v4/projects/%s/merge_requests/%s/discussions"
+    (code-review-gitlab--post (format "/v4/projects/%s/merge_requests/%s/discussions"
                        (code-review-gitlab--project-id gitlab)
                        (oref gitlab number))
                nil
