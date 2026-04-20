@@ -163,6 +163,12 @@ using COMMENTS."
                                       :id (a-get r 'id)
                                       :content (a-get r 'content)))
                                    .reactions.nodes))
+                       (_position-check (when (not handled-pos)
+                                          (throw :code-review/comment-missing-position
+                                                 "Every comment requires a position in the diff.")))
+                       (_path-check (when (not .path)
+                                      (throw :code-review/comment-missing-path
+                                             "Every comment requires a path in the diff.")))
                        (obj (cond
                              (.reply?
                               (code-review-reply-comment-section
@@ -217,14 +223,6 @@ using COMMENTS."
                                :updatedAt .updatedAt)))))
 
                   ;;; extra checks
-                  (when (not handled-pos)
-                    (throw :code-review/comment-missing-position
-                           "Every comment requires a position in the diff."))
-
-                  (when (not .path)
-                    (throw :code-review/comment-missing-path
-                           "Every comment requires a path in the diff."))
-
                   (when (and (not .bodyHTML) (not .bodyText))
                     (code-review-utils--log
                      "code-review-comment-make-group"

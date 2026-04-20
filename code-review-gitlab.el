@@ -197,11 +197,16 @@ an object then we need to build the diff string ourselves here."
       (code-review-gitlab--regular-comment? c))
     all-comments)))
 
+(defun code-review-gitlab--comment-path (comment)
+  "Return the diff path from Gitlab COMMENT."
+  (or (a-get-in comment (list 'position 'oldPath))
+      (a-get-in comment (list 'position 'newPath))))
+
 (defun code-review-gitlab--review-comment->code-review-comment (comment)
   "Transform a Gitlab review COMMENT into `code-review-comment' structure."
   (let-alist comment
-    (let* ((path .position.oldPath)
-           (mapping  (alist-get .position.oldPath
+    (let* ((path (code-review-gitlab--comment-path comment))
+           (mapping  (alist-get path
                                 code-review-gitlab-line-diff-mapping
                                 nil nil 'equal))
            (line-obj (if .position.oldLine
@@ -221,7 +226,7 @@ an object then we need to build the diff string ourselves here."
         (createdAt . ,.createdAt)
         (updatedAt . ,.updatedAt)
         (comments (nodes ((bodyHTML . ,.bodyHTML)
-                          (path . ,.position.oldPath)
+                          (path . ,path)
                           (position . ,diff-pos)
                           (databaseId . ,discussion-id)
                           (createdAt . ,.createdAt)
@@ -234,7 +239,7 @@ an object then we need to build the diff string ourselves here."
                             (lambda (c)
                               (let ((line (or (a-get-in c (list 'position 'oldLine))
                                               (a-get-in c (list 'position 'newLine))))
-                                    (path (a-get-in c (list 'position 'oldPath))))
+                                    (path (code-review-gitlab--comment-path c)))
                                 ;; we assume that every review comment requires
                                 ;; a positional line number to be possible to
                                 ;; place it in the diff. However, Gitlab's API
@@ -249,6 +254,8 @@ an object then we need to build the diff string ourselves here."
                                     found! Possibly a bug in
                                     heuristic to identify Review
                                     Comments")
+                                  (unless path
+                                    (error "Review Comment without path found!"))
                                   (concat path ":" (number-to-string line)))))
                             review-comments)))
     (-reduce-from
