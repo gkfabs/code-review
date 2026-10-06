@@ -84,7 +84,9 @@ For internal usage only.")
                          ((string-prefix-p "/v4/" resource)
                           (substring resource 3))
                          (t resource)))
-              (args (code-review-gitlab--remove-arg args :host)))
+              ;; `ghub' no longer defaults to the API root of gitlab.com.
+              (args (append (code-review-gitlab--remove-arg args :host)
+                            (list :host "gitlab.com/api/v4"))))
           (cons resource args))
       (cons resource args))))
 
